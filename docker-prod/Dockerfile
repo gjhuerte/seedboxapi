@@ -206,7 +206,8 @@ RUN set -eux; \
 
 WORKDIR /var/www/html
 
-# Starts as root: the entrypoint applies PUID/PGID, then runs everything as www-data.
+# Starts as root: the entrypoint applies PUID/PGID; supervisord and the nginx/PHP-FPM
+# masters stay root, workers and the scheduler run as www-data.
 EXPOSE 8095
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \

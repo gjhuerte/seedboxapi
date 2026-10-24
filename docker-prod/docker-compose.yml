@@ -63,8 +63,9 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    # The entrypoint needs these to apply PUID/PGID and fix volume ownership;
-    # everything else is dropped.
+    # Needed to apply PUID/PGID, fix volume ownership, and let the root
+    # supervisord / nginx / PHP-FPM masters run and signal their www-data
+    # workers. Everything else is dropped.
     cap_drop:
       - ALL
     cap_add:
@@ -73,6 +74,7 @@ services:
       - FOWNER
       - SETUID
       - SETGID
+      - KILL
     stop_grace_period: 30s
     logging:
       driver: json-file

@@ -9,7 +9,9 @@
 #   4. create or load APP_KEY (/config/app.key) and the SQLite database,
 #   5. cache config and run migrations,
 #
-# then runs supervisord (nginx, PHP-FPM, scheduler) as www-data.
+# then starts supervisord. supervisord and the nginx / PHP-FPM masters stay
+# root only to open the log pipes and the socket; every worker and the
+# scheduler run as www-data.
 set -eu
 
 PUID="${PUID:-1000}"
@@ -35,11 +37,6 @@ chmod 1777 /tmp
 # Stale sockets from a previous run in a persistent /tmp.
 rm -f /tmp/php-fpm.sock /tmp/supervisor.sock /tmp/supervisord.pid /tmp/nginx.pid
 chown -R www-data:www-data "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
-# Docker's stdout/stderr pipes belong to root. supervisord, nginx and PHP-FPM
-# open /dev/stdout and /dev/stderr after root is dropped, which fails with
-# EACCES unless the pipes are handed to www-data first.
-chown --dereference www-data:www-data "/proc/$$/fd/1" "/proc/$$/fd/2" 2>/dev/null \
-    || log "warning: could not hand stdout/stderr to www-data; logs may fail to open."
 
 # 3. Port ----------------------------------------------------------------
 case "$PORT" in
@@ -75,7 +72,7 @@ if [ "${DB_CONNECTION:-sqlite}" = "sqlite" ]; then
     chmod 0640 "$DB_FILE"
 fi
 
-# 5. Drop root for everything else ---------------------------------------
+# 5. App setup as www-data, then supervisord ------------------------------
 as_app() { setpriv --reuid=www-data --regid=www-data --init-groups "$@"; }
 export HOME=/tmp
 
@@ -85,4 +82,7 @@ as_app php artisan migrate --force --no-ansi
 
 log "listening on port $PORT (PUID=$PUID PGID=$PGID INTERVAL=${INTERVAL:-600}s DEBUG=${DEBUG:-0})"
 
-exec setpriv --reuid=www-data --regid=www-data --init-groups "$@"
+# Not dropped here on purpose: a non-root process cannot reopen Docker's
+# stdout/stderr (/dev/stdout -> EACCES), so supervisord keeps root to open them
+# and starts each program with its own user (see supervisord.conf).
+exec "$@"
