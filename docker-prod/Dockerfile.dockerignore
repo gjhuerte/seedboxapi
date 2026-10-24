@@ -1,0 +1,54 @@
+# Build context is the repository root (see docker-prod/docker-compose.yml and
+# .github/workflows/docker.yml). Keep secrets, local state and anything that is
+# rebuilt inside the image out of it.
+#
+# BuildKit picks this file up automatically because it sits next to the
+# Dockerfile it is named after.
+
+# Repository and tooling metadata.
+.git
+.github
+.agents
+.idea
+.vscode
+.zed
+.nova
+.fleet
+**/.DS_Store
+
+# Secrets and local overrides. .env.example is harmless and stays.
+.env
+.env.*
+!.env.example
+auth.json
+docker-prod/.env
+
+# Rebuilt inside the image by composer install / npm ci / npm run build.
+node_modules
+vendor
+public/build
+public/hot
+public/storage
+bootstrap/cache/*.php
+bootstrap/ssr
+
+# Runtime state that belongs in the storage volume, not the image.
+storage/*.key
+storage/logs/*
+storage/pail
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/claude/*
+storage/app/*
+!storage/app/.gitignore
+database/*.sqlite
+database/*.sqlite-journal
+
+# Not needed at runtime. The dev image builds from docker-dev/ as its own
+# context, so it has no place in the production context.
+docker-dev
+tests
+phpunit.xml
+.phpunit.cache
+.phpunit.result.cache

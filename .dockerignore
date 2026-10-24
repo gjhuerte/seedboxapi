@@ -1,0 +1,61 @@
+# Build context for docker-prod/Dockerfile (built from the repository root).
+# Anything listed here never reaches the Docker daemon, so it can't leak into
+# an image layer or invalidate the build cache.
+
+# Version control and CI
+.git
+.github
+.gitattributes
+
+# Dependencies: installed inside the image, never copied from the host
+node_modules
+vendor
+
+# Secrets and local configuration (.env.example is kept as documentation)
+**/.env
+**/.env.*
+!.env.example
+auth.json
+storage/*.key
+
+# Runtime state from local runs
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/testing/*
+storage/app/*
+storage/pail
+bootstrap/cache/*.php
+database/*.sqlite*
+
+# Build output (rebuilt inside the image)
+public/build
+public/hot
+public/storage
+
+# Tests, docs and tooling that the image doesn't need
+tests
+.phpunit.cache
+.phpunit.result.cache
+**/*.md
+docs
+docker-dev
+.agents
+npm-debug.log*
+yarn-error.log
+
+# IDE and editor folders
+.idea
+.vscode
+.fleet
+.zed
+.nova
+.phpactor.json
+*.swp
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini

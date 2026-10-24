@@ -1,0 +1,89 @@
+# SEEDBOXAPI — production stack
+#
+#   cp docker-prod/.env.example docker-prod/.env     # compose settings (ports, limits)
+#   cp .env.example .env                            # application settings (see DOCKER.md)
+#   docker compose -f docker-prod/docker-compose.yml up -d --build
+#
+# One container, like the original docker/ setup: nginx + PHP-FPM + queue
+# worker + scheduler under supervisord. Hardened: non-root, read-only root
+# filesystem, no Linux capabilities, CPU/memory/PID limits, no Docker socket.
+# The database is your existing MariaDB on the external `proxy` network.
+
+name: seedboxapi
+
+services:
+  app:
+    container_name: seedboxapi
+    image: ${SEEDBOXAPI_IMAGE:-seedboxapi}:${SEEDBOXAPI_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker-prod/Dockerfile
+    restart: always
+    # Application settings come from the project .env at runtime and are
+    # never baked into the image.
+    env_file: ../.env
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-false}
+      # Runs `db:seed --force` on start (no factories in a --no-dev image).
+      # Needs RUN_MIGRATIONS=true on a fresh database.
+      RUN_SEEDER: ${RUN_SEEDER:-false}
+      QUEUE_WORKERS: ${QUEUE_WORKERS:-1}
+    # Published on localhost only; the reverse proxy reaches the container as
+    # http://seedboxapi:8080 over the `proxy` network. Use SEEDBOXAPI_BIND=0.0.0.0 only
+    # when nothing sits in front of it.
+    ports:
+      - "${SEEDBOXAPI_BIND:-127.0.0.1}:${SEEDBOXAPI_HTTP_PORT:-8010}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777,noexec,nosuid,nodev
+      - /var/www/html/bootstrap/cache:size=16m,uid=33,gid=33,mode=0750,noexec,nosuid,nodev
+    volumes:
+      # SQLite database (DB_CONNECTION=sqlite). Its own volume because SQLite
+      # writes -journal/-wal/-shm files next to the database, which the
+      # read-only code tree does not allow. Set in .env:
+      #   DB_DATABASE=/var/www/html/database/sqlite/database.sqlite
+      - database:/var/www/html/database/sqlite
+      - storage:/var/www/html/storage
+      - /etc/localtime:/etc/localtime:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ulimits:
+      nofile: { soft: 8192, hard: 16384 }
+    deploy:
+      resources:
+        limits:
+          cpus: "${SEEDBOXAPI_CPUS:-2.0}"
+          memory: ${SEEDBOXAPI_MEMORY:-1G}
+          pids: 256
+        reservations:
+          memory: 256M
+    stop_grace_period: 100s
+    healthcheck:
+      # /up boots Laravel, so this checks nginx, PHP-FPM and the app together.
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8080/up') === false ? 1 : 0);"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: ${SEEDBOXAPI_PROXY_NETWORK:-proxy}
+
+volumes:
+  database:
+    name: seedboxapi_database
+  storage:
+    name: seedboxapi_storage

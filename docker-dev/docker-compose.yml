@@ -1,0 +1,50 @@
+# SEEDBOXAPI — development stack
+#
+#   cp docker-dev/.env.example docker-dev/.env     # set UID/GID, ports
+#   docker compose -f docker-dev/docker-compose.yml up -d --build
+#   docker exec -it seedboxapi composer install
+#   docker exec -it seedboxapi php artisan migrate --seed
+#
+# Like the original docker/ setup, the project folder is bind-mounted and the
+# app talks to MariaDB over the external `proxy` network. The Docker socket
+# is NOT mounted (it gives full control of the host).
+
+name: seedboxapi
+
+services:
+  app:
+    container_name: seedboxapi
+    image: seedboxapi:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    working_dir: /var/www/html
+    restart: unless-stopped
+    environment:
+      XDEBUG_MODE: ${XDEBUG_MODE:-off}
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8009}:8080"
+    volumes:
+      - ${PROJECT_PATH:-..}:/var/www/html
+      - /etc/localtime:/etc/localtime:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/up"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: ${SEEDBOXAPI_PROXY_NETWORK:-proxy}

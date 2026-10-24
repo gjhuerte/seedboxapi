@@ -1,0 +1,103 @@
+name: docker-publish
+
+# Builds docker-prod/Dockerfile and pushes it to ghcr.io/gjhuerte/seedboxapi.
+# The package inherits this repository's (private) visibility through the
+# org.opencontainers.image.source label.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    # Skip builds for changes that can't affect the image. (GitHub ignores
+    # path filters for tag pushes, so release tags always build.)
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'tests/**'
+      - 'docker-dev/**'
+      - '.agents/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/dependabot.yml'
+      - '.github/workflows/lint.yml'
+      - '.github/workflows/tests.yml'
+      - '.github/workflows/cleanup-packages.yml'
+      - '.editorconfig'
+      - '.gitattributes'
+      - '.nvmrc'
+      - '.prettierrc'
+      - '.prettierignore'
+      - 'eslint.config.js'
+      - 'phpunit.xml'
+      - 'pint.json'
+      - 'components.json'
+      - 'LICENSE'
+  workflow_dispatch:
+
+# A newer push to the same branch or tag cancels the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/gjhuerte/seedboxapi
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          # Only the explicit rule below may add `latest` (not semver tags).
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=SeedboxAPI
+            org.opencontainers.image.description=Seedbox API
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker-prod/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # One plain image manifest per push: no attestation manifests, which
+          # would show up as extra untagged versions (and break if the cleanup
+          # workflow deleted them).
+          provenance: false
+          sbom: false
