@@ -1,58 +1,205 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# seedboxapi
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A small Laravel + React app that keeps your **MyAnonamouse dynamic seedbox IP** up to date. It is a drop-in alternative to the [`myanonamouse/seedboxapi`](https://hub.docker.com/r/myanonamouse/seedboxapi) container, with a web UI for setting your `mam_id` and seeing what happened.
 
-## About Laravel
+It runs inside [gluetun](https://github.com/qdm12/gluetun)'s network (`network_mode: "service:gluetun"`), so every request to MAM leaves through your VPN, and MAM registers the VPN's IP for your session.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- **Automatic updates:** every `INTERVAL` seconds it calls MAM's `dynamicSeedbox.php` with your session cookie. MAM answers *Completed* when the IP changed and *No change* otherwise, so frequent checks are harmless.
+- **Cookie rotation:** MAM may send back a new `mam_id`; it is saved (encrypted) and used from then on.
+- **Web UI:** paste or replace the `mam_id`, change the update interval, run an update now, and see the current IP, ASN, last and next check.
+- **History:** an *Activity* tab with every request to MAM and its result, and a *Logs* tab with the app's log.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+Stack: Laravel 13, Inertia 3 + React 19, Tailwind CSS 4, SQLite. One container runs nginx, PHP-FPM and the Laravel scheduler under supervisord.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+---
 
-## Learning Laravel
+## Quick start (production)
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+### 1. Get a `mam_id`
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+On MyAnonamouse, open [Preferences → Security](https://www.myanonamouse.net/preferences/index.php?view=security) and create a session:
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+| Field | Value |
+| --- | --- |
+| IP | The VPN's IP: the IP MAM sees from inside gluetun, **not** your browser's IP. The UI shows it after the first check, even without a `mam_id`. |
+| IP vs ASN locked session | **ASN**, so the IP can change within your VPN provider. |
+| Allow Session to set Dynamic Seedbox | **Yes** |
+| Session Label/note | e.g. `seedboxapi` |
 
-## Agentic Development
+Submit, then copy the cookie value MAM shows. Use a separate session for this app rather than sharing one with Prowlarr or other clients.
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+### 2. Add the service to your gluetun stack
 
-```bash
-composer require laravel/boost --dev
+```yaml
+services:
+  gluetun:
+    image: qmcgaw/gluetun:v3
+    # … your existing gluetun settings …
+    ports:
+      - "8095:8095"          # seedboxapi web UI (published on gluetun)
 
-php artisan boost:install
+  seedboxapi:
+    image: ghcr.io/gjhuerte/seedboxapi:latest   # or a version, e.g. :1.0.0
+    container_name: seedboxapi
+    network_mode: "service:gluetun"
+    volumes:
+      - ./seedboxapi-volume/config:/config
+      - ./seedboxapi-volume/tmp:/tmp
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - DEBUG=0
+      - mam_id=              # optional, you can paste it in the UI instead
+      - INTERVAL=600
+    restart: unless-stopped
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Or build the image yourself from this repository:
 
-## Contributing
+```bash
+docker build -f docker-prod/Dockerfile -t seedboxapi .
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Or use the complete example stack in `docker-prod/` (gluetun + seedboxapi):
 
-## Code of Conduct
+```bash
+cp docker-prod/.env.example docker-prod/.env    # VPN credentials, PUID/PGID, ports
+docker compose -f docker-prod/docker-compose.yml up -d --build
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+### 3. Open the UI
 
-## Security Vulnerabilities
+Go to **http://localhost:8095**, paste your `mam_id` and click **Save & update**. The first update runs right away; after that, every `INTERVAL` seconds.
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+> Because the container shares gluetun's network, its web port must be published on the **gluetun** service, and `PORT` must not clash with other apps in the same network (qBittorrent often uses 8080; gluetun uses 8000 and 8888).
 
-## License
+---
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## Configuration
+
+| Variable | Default | |
+| --- | --- | --- |
+| `mam_id` (or `MAM_ID`) | *(empty)* | Initial session cookie. Applied on start and whenever the value changes, so it never overwrites a newer cookie saved in the UI or rotated by MAM. |
+| `INTERVAL` | `600` | Default seconds between updates (60–86400). It can be changed in the UI (*Check every … min*); a changed `INTERVAL` replaces the UI value on the next start. The scheduler ticks every minute, so it is rounded up to whole minutes. |
+| `PUID` / `PGID` | `1000` | Owner of the files in `/config`. |
+| `DEBUG` | `0` | `1` logs every check (including *No change*) to `docker logs` and the Logs tab. |
+| `PORT` | `8095` | Port the web UI listens on inside gluetun's network. |
+| `UI_USERNAME` / `UI_PASSWORD` | *(empty)* | Set both to protect the UI with HTTP Basic auth. Recommended if the port is reachable from your LAN; the page can replace your `mam_id`. |
+| `MAM_AUTO_SYNC` | `true` | `false` stops automatic updates (the UI's *Update now* still works). |
+| `MAM_TIMEOUT` | `15` | Seconds to wait for MAM. |
+| `MAM_HISTORY_DAYS` | `14` | How long the Activity history is kept. |
+| `APP_KEY` | *(generated)* | Generated on first start and stored in `/config/app.key`. It encrypts the stored `mam_id`, so keep it with the rest of `/config`. |
+
+### Volumes
+
+| Path | Contents |
+| --- | --- |
+| `/config` | `seedboxapi.sqlite` (encrypted `mam_id`, history), `app.key`, `logs/seedboxapi-YYYY-MM-DD.log` (14 days). Back this up. |
+| `/tmp` | Runtime sockets and temp files (optional, as in the official image). |
+
+---
+
+## How it works
+
+```
+scheduler (every minute)
+  └─ php artisan mam:sync --if-due        (waits until INTERVAL has passed)
+       ├─ no mam_id yet → GET https://t.myanonamouse.net/json/jsonIp.php       (shows the IP MAM sees)
+       └─ mam_id set    → GET https://t.myanonamouse.net/json/dynamicSeedbox.php
+                            Cookie: mam_id=<stored value>
+                            ← {"Success":true,"msg":"Completed","ip":"…","ASN":…,"AS":"…"}
+                            ← Set-Cookie: mam_id=<rotated value>   (saved, encrypted)
+```
+
+| MAM answer | Shown as | Meaning |
+| --- | --- | --- |
+| 200 *Completed* | **Updated** | MAM now has the new IP. |
+| 200 *No change* | **No change** | MAM already had this IP. |
+| 429 *Last Change too recent* | **Too recent** | MAM limits how often the IP can change; the next check retries. |
+| 403 (e.g. *IP mismatch*, *ASN mismatch*, *No Session Cookie*) | **Rejected** | The session cannot be updated from this connection. Create a new dynamic-seedbox session for the VPN (or lock it to the VPN's ASN) and paste the new `mam_id`. |
+| timeout / no JSON | **Unreachable** | Usually the VPN is down; check gluetun. |
+
+A cache lock makes sure the scheduler, *Update now* and saving a new `mam_id` never run at the same time, so a rotated cookie is never lost.
+
+### Useful commands
+
+```bash
+docker exec seedboxapi php artisan mam:sync           # update now and print the result
+docker exec seedboxapi supervisorctl status           # nginx, php-fpm, scheduler
+docker logs -f seedboxapi                             # everything, including MAM results
+```
+
+---
+
+## Development (`docker-dev/`)
+
+The development container bind-mounts the project, runs as your user, and starts Vite with hot reload.
+
+```bash
+cp docker-dev/.env.example docker-dev/.env           # UID/GID, ports
+docker compose -f docker-dev/docker-compose.yml up -d --build
+
+docker exec -it seedboxapi composer install
+docker exec -it seedboxapi cp -n .env.example .env
+docker exec -it seedboxapi php artisan key:generate
+docker exec -it seedboxapi touch database/database.sqlite
+docker exec -it seedboxapi php artisan migrate
+docker exec -it seedboxapi npm install
+docker exec -it seedboxapi supervisorctl start vite
+```
+
+| Service | URL |
+| --- | --- |
+| App | http://localhost:8009 |
+| Vite (HMR) | http://localhost:5173 |
+
+The development container is **not** behind the VPN, so MAM would see your home IP. Automatic updates are therefore off (`MAM_AUTO_SYNC=false` in `docker-dev/.env`). Test with *Update now* and a throwaway MAM session, or join the dev container to gluetun.
+
+### Tests
+
+```bash
+docker exec -it seedboxapi php artisan test
+```
+
+All requests to MAM are faked in the tests (`Http::fake()`), so nothing leaves your machine.
+
+### Code map
+
+| | |
+| --- | --- |
+| `app/Services/Mam/MamClient.php` | Calls `dynamicSeedbox.php` / `jsonIp.php`, reads the rotated cookie. |
+| `app/Services/Mam/MamCookie.php` | Stores the `mam_id` encrypted; applies `mam_id` from the environment. |
+| `app/Actions/SyncSeedboxIp.php` | One update: lock, call MAM, save the cookie, record the result. |
+| `app/Console/Commands/MamSync.php` | `php artisan mam:sync [--if-due]`, scheduled in `routes/console.php`. |
+| `app/Services/LogReader.php` | Tail of the log file for the Logs tab. |
+| `app/Http/Controllers/DashboardController.php` | The page, save/remove `mam_id`, update now. |
+| `resources/js/Pages/Dashboard.jsx` | The UI. |
+| `docker-prod/`, `docker-dev/` | Images, nginx, PHP-FPM, supervisord and compose files. |
+
+---
+
+## Releases
+
+Images are published to the GitHub Container Registry as [`ghcr.io/gjhuerte/seedboxapi`](https://github.com/gjhuerte/seedboxapi/pkgs/container/seedboxapi) for `linux/amd64` and `linux/arm64`.
+
+| Tag | Built from |
+| --- | --- |
+| `1.2.0`, `1.2`, `1`, `latest` | A release (`.github/workflows/release.yml`). Pre-releases such as `1.3.0-rc.1` only get their own tag. |
+| `edge`, `sha-abc1234` | Every push to `main` (`.github/workflows/docker-publish.yml`, amd64 only). |
+
+To publish a release, push a version tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+or open **Actions → release → Run workflow** and enter `1.0.0` (the tag is created for you). The workflow runs the tests and the Vite build, builds and pushes the multi-arch image, and creates the GitHub Release with generated notes and a ready-to-paste compose snippet.
+
+Everything uses the built-in `GITHUB_TOKEN`; no secrets to set up. On a public repository the Actions minutes and package storage are free, and the package inherits the repository's public visibility. If an older package was created private, make it public once under **Package settings → Danger Zone → Change visibility**.
+
+---
+
+## Credits
+
+Behaviour modelled on the official [`myanonamouse/seedboxapi`](https://hub.docker.com/r/myanonamouse/seedboxapi) container and [Mousehole](https://github.com/t-mart/mousehole).

@@ -6,6 +6,7 @@
 # extended with debugging tools:
 #
 #   PHP:     Xdebug (off by default), PCOV for fast coverage, Composer
+#   Front:   Node + npm for the Vite dev server (hot reload)
 #   Ops:     supervisorctl, PHP-FPM status page (/fpm-status), slow-request log
 #   Shell:   git, curl, jq, vim, nano, less, htop, strace, ping, dig, ss
 #   Data:    mariadb-client, redis-tools, sqlite3
@@ -27,7 +28,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
     PHP_VERSION=${PHP_VERSION} \
     COMPOSER_HOME=/home/www-data/.composer \
-    XDEBUG_MODE=off
+    XDEBUG_MODE=off \
+    VITE_DEV_SERVER=true
 
 RUN set -eux; \
     apt-get update; \
@@ -40,7 +42,7 @@ RUN set -eux; \
         php${PHP_VERSION}-redis php${PHP_VERSION}-sqlite3 php${PHP_VERSION}-xml \
         php${PHP_VERSION}-zip \
         php${PHP_VERSION}-xdebug php${PHP_VERSION}-pcov \
-        composer \
+        composer nodejs npm \
         git unzip curl jq less vim-tiny nano htop procps strace \
         iproute2 iputils-ping dnsutils \
         mariadb-client redis-tools sqlite3; \
@@ -58,12 +60,12 @@ RUN set -eux; \
     chown -R www-data:www-data /home/www-data /var/www/html
 
 # Configuration (same file layout as the original docker/ folder).
-COPY etc/nginx/nginx.conf /etc/nginx/nginx.conf
-COPY etc/nginx/conf.d/www.conf /etc/nginx/conf.d/www.conf
-COPY etc/php-fpm.d/www.conf /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
-COPY php/php.ini /etc/php/${PHP_VERSION}/fpm/conf.d/99-seedboxapi.ini
-COPY php/php.ini /etc/php/${PHP_VERSION}/cli/conf.d/99-seedboxapi.ini
-COPY supervisord.conf /etc/supervisor/supervisord.conf
+COPY --chmod=0644 etc/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY --chmod=0644 etc/nginx/conf.d/www.conf /etc/nginx/conf.d/www.conf
+COPY --chmod=0644 etc/php-fpm.d/www.conf /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
+COPY --chmod=0644 php/php.ini /etc/php/${PHP_VERSION}/fpm/conf.d/99-seedboxapi.ini
+COPY --chmod=0644 php/php.ini /etc/php/${PHP_VERSION}/cli/conf.d/99-seedboxapi.ini
+COPY --chmod=0644 supervisord.conf /etc/supervisor/supervisord.conf
 
 RUN set -eux; \
     sed -ri \

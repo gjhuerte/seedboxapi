@@ -1,23 +1,32 @@
 # SEEDBOXAPI — production image
 #
-# Same layout as the original docker/ setup (Ubuntu + nginx + PHP-FPM run
-# by supervisord in one container), hardened for production:
+# One container (Ubuntu + nginx + PHP-FPM + Laravel scheduler under
+# supervisord) built to run inside gluetun's network:
 #
-#   - Ubuntu 26.04 LTS with PHP 8.5 from Ubuntu's own signed repositories
-#     (no third-party PPA, no Composer binary in the repo)
-#   - Application code, Composer vendor and built assets are baked into the
-#     image (immutable deploys); nothing is bind-mounted from the host
-#   - Build tools (Composer, Node, git) exist only in the build stages
-#   - Every process runs as www-data; nginx listens on 8080; code is
-#     root-owned and read-only to PHP
+#   seedboxapi:
+#     image: seedboxapi
+#     network_mode: "service:gluetun"
+#     volumes:
+#       - ./seedboxapi-volume/config:/config
+#       - ./seedboxapi-volume/tmp:/tmp
+#     environment:
+#       - PUID=1000
+#       - PGID=1000
+#       - DEBUG=0
+#       - mam_id=
+#       - INTERVAL=600
 #
-# Build from the repository root (the root .dockerignore keeps .env, vendor,
-# node_modules and other local files out of the build context):
+#   - Ubuntu 26.04 LTS with PHP 8.5 from Ubuntu's own repositories
+#   - Code, Composer vendor and built assets are baked in, root-owned and
+#     read-only to PHP; build tools exist only in the build stages
+#   - The entrypoint starts as root only to apply PUID/PGID and fix volume
+#     ownership, then drops to www-data for every process
+#   - Everything persistent (SQLite database, APP_KEY, logs) lives in /config
+#
+# Build from the repository root:
 #   docker compose -f docker-prod/docker-compose.yml build
 #
-# Stages: base → tools → vendor + assets → build → runtime. BuildKit runs
-# `composer install` and `npm ci` in parallel, and each step is reused from
-# cache until its own inputs change.
+# Stages: base → tools → vendor + assets → build → runtime.
 
 ARG UBUNTU_VERSION=26.04
 ARG PHP_VERSION=8.5
@@ -63,7 +72,10 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 # tools: build-only toolchain (rarely changes)
 # ---------------------------------------------------------------------------
-FROM base AS tools
+# Runs on the build machine's own platform even for an arm64 image: vendor/
+# and the Vite build are platform-independent, so only the runtime stage
+# needs emulation in multi-arch builds.
+FROM --platform=$BUILDPLATFORM base AS tools
 
 RUN set -eux; \
     apt-get update; \
@@ -127,7 +139,10 @@ RUN set -eux; \
     # runtime does not need is already kept out by Dockerfile.dockerignore.
     rm -rf node_modules docker-prod \
         storage/logs/* bootstrap/cache/*.php; \
-    ln -sfn ../storage/app/public public/storage
+    ln -sfn ../storage/app/public public/storage; \
+    # Host files may be 0600 (COPY keeps the mode); the code must be readable
+    # by www-data at runtime while staying root-owned.
+    chmod -R u=rwX,go=rX /app
 
 # ---------------------------------------------------------------------------
 # runtime
@@ -135,19 +150,35 @@ RUN set -eux; \
 FROM base AS runtime
 
 ARG PHP_VERSION
-ENV APP_ENV=production \
+
+# Defaults for running without an .env file. Everything app-specific can be
+# overridden in the compose `environment:` block.
+ENV APP_NAME="Seedbox API" \
+    APP_ENV=production \
     APP_DEBUG=false \
+    APP_URL=http://localhost \
     LOG_CHANNEL=stack \
-    LOG_STACK=single,stderr \
-    QUEUE_WORKERS=1
+    LOG_STACK=stderr,daily \
+    LOG_PATH=/config/logs/seedboxapi.log \
+    LOG_DAILY_DAYS=14 \
+    DB_CONNECTION=sqlite \
+    DB_DATABASE=/config/seedboxapi.sqlite \
+    SESSION_DRIVER=database \
+    CACHE_STORE=database \
+    QUEUE_CONNECTION=sync \
+    PUID=1000 \
+    PGID=1000 \
+    DEBUG=0 \
+    INTERVAL=600 \
+    PORT=8095
 
 # Configuration (same file layout as the original docker/ folder).
-COPY docker-prod/etc/nginx/nginx.conf /etc/nginx/nginx.conf
-COPY docker-prod/etc/nginx/conf.d/www.conf /etc/nginx/conf.d/www.conf
-COPY docker-prod/etc/php-fpm.d/www.conf /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
-COPY docker-prod/php/php.ini /etc/php/${PHP_VERSION}/fpm/conf.d/99-seedboxapi.ini
-COPY docker-prod/php/php.ini /etc/php/${PHP_VERSION}/cli/conf.d/99-seedboxapi.ini
-COPY docker-prod/supervisord.conf /etc/supervisor/supervisord.conf
+COPY --chmod=0644 docker-prod/etc/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY --chmod=0644 docker-prod/etc/nginx/conf.d/www.conf /etc/nginx/conf.d/www.conf
+COPY --chmod=0644 docker-prod/etc/php-fpm.d/www.conf /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
+COPY --chmod=0644 docker-prod/php/php.ini /etc/php/${PHP_VERSION}/fpm/conf.d/99-seedboxapi.ini
+COPY --chmod=0644 docker-prod/php/php.ini /etc/php/${PHP_VERSION}/cli/conf.d/99-seedboxapi.ini
+COPY --chmod=0644 docker-prod/supervisord.conf /etc/supervisor/supervisord.conf
 COPY --chmod=0755 docker-prod/entrypoint.sh /usr/local/bin/seedboxapi-entrypoint
 
 # System tweaks that do not depend on the application code.
@@ -158,7 +189,9 @@ RUN set -eux; \
         -e 's#^;?\s*error_log\s*=.*#error_log = /proc/self/fd/2#' \
         /etc/php/${PHP_VERSION}/fpm/php-fpm.conf; \
     ln -s /usr/sbin/php-fpm${PHP_VERSION} /usr/local/sbin/php-fpm; \
-    php -m | grep -qi 'zend opcache'
+    php -m | grep -qi 'zend opcache'; \
+    # setpriv (util-linux) drops root in the entrypoint.
+    command -v setpriv
 
 # Application code: owned by root, so a compromised PHP process cannot change it.
 COPY --from=build /app /var/www/html
@@ -166,19 +199,18 @@ COPY --from=build /app /var/www/html
 RUN set -eux; \
     cd /var/www/html; \
     mkdir -p storage/app/public storage/framework/cache/data storage/framework/sessions \
-        storage/framework/views storage/logs bootstrap/cache; \
-    # SQLite needs to write the database file *and* its -journal/-wal/-shm
-    # siblings, so the database lives in its own writable directory (mounted
-    # as a volume at runtime) rather than in the read-only code tree.
-    mkdir -p database/sqlite; \
-    chown -R www-data:www-data storage bootstrap/cache database/sqlite; \
-    chmod -R u=rwX,g=rX,o= storage bootstrap/cache database/sqlite; \
-    php -m | grep -qi 'zend opcache'
+        storage/framework/views storage/logs bootstrap/cache /config; \
+    # Ownership is set again at start, after PUID/PGID are applied.
+    chown -R www-data:www-data storage bootstrap/cache /config; \
+    chmod -R u=rwX,g=rX,o= storage bootstrap/cache
 
 WORKDIR /var/www/html
-USER www-data:www-data
 
-EXPOSE 8080
+# Starts as root: the entrypoint applies PUID/PGID, then runs everything as www-data.
+EXPOSE 8095
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD php -r 'exit(@file_get_contents("http://127.0.0.1:".(getenv("PORT") ?: 8095)."/up") === false ? 1 : 0);'
 
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/bin/tini", "--", "seedboxapi-entrypoint"]

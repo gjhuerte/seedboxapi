@@ -1,47 +1,83 @@
 #!/bin/sh
 #
-# SEEDBOXAPI production entrypoint.
+# SEEDBOXAPI production entrypoint. Starts as root, like the official
+# myanonamouse/seedboxapi and linuxserver.io images, only to:
 #
-# 1. Refuses to start without APP_KEY.
-# 1b. Creates the SQLite database file when DB_CONNECTION=sqlite.
-# 2. Warms Laravel's config, route, view and event caches.
-# 3. Runs migrations when RUN_MIGRATIONS=true.
-# 4. Runs the database seeder when RUN_SEEDER=true.
-# 5. Hands over to supervisord (nginx, PHP-FPM, queue worker, scheduler).
+#   1. map www-data to PUID/PGID so files in /config belong to you,
+#   2. make /config and /tmp usable (both may be bind mounts),
+#   3. listen on PORT (every app in gluetun's network shares its ports),
+#   4. create or load APP_KEY (/config/app.key) and the SQLite database,
+#   5. cache config and run migrations,
+#
+# then runs supervisord (nginx, PHP-FPM, scheduler) as www-data.
 set -eu
 
-if [ -z "${APP_KEY:-}" ]; then
-    echo "[seedboxapi] APP_KEY is not set. Generate one with: php artisan key:generate --show" >&2
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
+PORT="${PORT:-8095}"
+APP_DIR=/var/www/html
+
+log() { echo "[seedboxapi] $*"; }
+
+if [ "$(id -u)" != "0" ]; then
+    log "must start as root to apply PUID/PGID; remove any 'user:' from the compose service." >&2
     exit 1
 fi
 
-cd /var/www/html
+# 1. User mapping --------------------------------------------------------
+[ "$(id -g www-data)" = "$PGID" ] || groupmod -o -g "$PGID" www-data
+[ "$(id -u www-data)" = "$PUID" ] || usermod -o -u "$PUID" www-data
 
-# SQLite will not create the database file itself; `migrate` fails with
-# "unable to open database file" when it is missing.
-if [ "${DB_CONNECTION:-sqlite}" = "sqlite" ]; then
-    SQLITE_DB="${DB_DATABASE:-/var/www/html/database/sqlite/database.sqlite}"
-    if [ ! -f "$SQLITE_DB" ]; then
-        if ! touch "$SQLITE_DB" 2>/dev/null; then
-            echo "[seedboxapi] cannot create $SQLITE_DB — its directory must be a writable volume owned by www-data (uid 33)." >&2
-            exit 1
-        fi
-        chmod 0640 "$SQLITE_DB"
-        echo "[seedboxapi] created empty SQLite database at $SQLITE_DB"
+# 2. Writable paths ------------------------------------------------------
+mkdir -p /config/logs
+chown www-data:www-data /config /config/logs
+chmod 1777 /tmp
+# Stale sockets from a previous run in a persistent /tmp.
+rm -f /tmp/php-fpm.sock /tmp/supervisor.sock /tmp/supervisord.pid /tmp/nginx.pid
+chown -R www-data:www-data "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
+
+# 3. Port ----------------------------------------------------------------
+case "$PORT" in
+    ''|*[!0-9]*) log "PORT must be a number, got '$PORT'." >&2; exit 1 ;;
+esac
+sed -ri "s/listen [0-9]+ default_server;/listen ${PORT} default_server;/" /etc/nginx/conf.d/www.conf
+
+# 4. APP_KEY, logging, database ------------------------------------------
+if [ -z "${APP_KEY:-}" ]; then
+    if [ ! -s /config/app.key ]; then
+        umask 077
+        printf 'base64:%s\n' "$(head -c 32 /dev/urandom | base64)" > /config/app.key
+        umask 022
+        log "generated APP_KEY in /config/app.key (keep it: it decrypts the stored mam_id)"
     fi
+    APP_KEY="$(cat /config/app.key)"
+    export APP_KEY
+fi
+[ ! -f /config/app.key ] || { chown www-data:www-data /config/app.key; chmod 600 /config/app.key; }
+
+case "${DEBUG:-0}" in
+    1|true|yes|on) export LOG_LEVEL=debug ;;
+    *) export LOG_LEVEL="${LOG_LEVEL:-info}" ;;
+esac
+
+if [ "${DB_CONNECTION:-sqlite}" = "sqlite" ]; then
+    DB_FILE="${DB_DATABASE:-/config/seedboxapi.sqlite}"
+    if [ ! -f "$DB_FILE" ]; then
+        touch "$DB_FILE"
+        log "created SQLite database at $DB_FILE"
+    fi
+    chown www-data:www-data "$DB_FILE"
+    chmod 0640 "$DB_FILE"
 fi
 
-php artisan optimize --no-ansi
+# 5. Drop root for everything else ---------------------------------------
+as_app() { setpriv --reuid=www-data --regid=www-data --init-groups "$@"; }
+export HOME=/tmp
 
-if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
-    php artisan migrate --force --no-ansi
-fi
+cd "$APP_DIR"
+as_app php artisan optimize --no-ansi
+as_app php artisan migrate --force --no-ansi
 
-# Runs DatabaseSeeder. The image is built with --no-dev, so seeders must not
-# use factories/fake(). Keep seeders idempotent if you leave this on, and pair
-# it with RUN_MIGRATIONS=true on a new database.
-if [ "${RUN_SEEDER:-false}" = "true" ]; then
-    php artisan db:seed --force --no-ansi
-fi
+log "listening on port $PORT (PUID=$PUID PGID=$PGID INTERVAL=${INTERVAL:-600}s DEBUG=${DEBUG:-0})"
 
-exec "$@"
+exec setpriv --reuid=www-data --regid=www-data --init-groups "$@"

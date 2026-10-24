@@ -52,3 +52,6 @@ tests
 phpunit.xml
 .phpunit.cache
 .phpunit.result.cache
+
+# Runtime data of the example stack.
+docker-prod/seedboxapi-volume

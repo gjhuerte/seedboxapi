@@ -1,9 +1,95 @@
 @import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
 
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 @source '../../storage/framework/views/*.php';
 
-@theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
+/* Modern Dark — authoritative tokens */
+:root {
+    --dp-color-ground: #050505;
+    --dp-color-panel: #0e0e0e;
+    --dp-color-hairline: #222222;
+    --dp-color-hairline-2: #303030;
+    --dp-color-bright: #f2f2f2;
+    --dp-color-read: #a6a9ad;
+    --dp-color-meta: #8a8d91;
+    --dp-color-live: #3fd6c6;
+    --dp-color-inverse-ink: #0a0a0a;
+    --dp-color-dim: #96999d;
+    --dp-typography-face: 'Geist Variable', 'Modern Dark Grotesk', 'Helvetica Neue', Arial, sans-serif;
+    --dp-typography-mono: 'Geist Mono Variable', 'Modern Dark Mono', 'SFMono-Regular', Menlo, monospace;
+    --dp-spacing-gutter: 48px;
+    --dp-spacing-gap: 24px;
+    --dp-spacing-max: 1360px;
+    --dp-radius-panel: 6px;
+    --dp-radius-pill: 999px;
+    --dp-border-hairline: 1px;
+    --dp-motion-duration: 120ms;
+    --dp-motion-ease: ease-out;
+}
+
+@theme inline {
+    --color-ground: var(--dp-color-ground);
+    --color-panel: var(--dp-color-panel);
+    --color-hairline: var(--dp-color-hairline);
+    --color-hairline-2: var(--dp-color-hairline-2);
+    --color-bright: var(--dp-color-bright);
+    --color-read: var(--dp-color-read);
+    --color-meta: var(--dp-color-meta);
+    --color-live: var(--dp-color-live);
+    --color-ink: var(--dp-color-inverse-ink);
+    --color-dim: var(--dp-color-dim);
+    --font-sans: var(--dp-typography-face);
+    --font-mono: var(--dp-typography-mono);
+    --radius-panel: var(--dp-radius-panel);
+    --radius-pill: var(--dp-radius-pill);
+    --spacing-max: var(--dp-spacing-max);
+    --breakpoint-sm: 560px;
+    --breakpoint-md: 900px;
+    --breakpoint-lg: 1180px;
+    --ease-dp: var(--dp-motion-ease);
+}
+
+@layer base {
+    html {
+        background: var(--dp-color-ground);
+        color-scheme: dark;
+    }
+
+    ::selection {
+        background: var(--dp-color-bright);
+        color: var(--dp-color-inverse-ink);
+    }
+
+    :focus-visible {
+        outline: 2px solid var(--dp-color-bright);
+        outline-offset: 3px;
+    }
+}
+
+/* Shared page column: 48px gutters, 24px under 1180px, 16px under 560px. */
+@utility shell {
+    width: 100%;
+    max-width: calc(var(--dp-spacing-max) + 2 * var(--dp-spacing-gutter));
+    margin-inline: auto;
+    padding-inline: 16px;
+
+    @media (width >= 560px) {
+        padding-inline: 24px;
+    }
+
+    @media (width >= 1180px) {
+        padding-inline: var(--dp-spacing-gutter);
+    }
+}
+
+@utility transition-dp {
+    transition-property: color, background-color, border-color;
+    transition-duration: var(--dp-motion-duration);
+    transition-timing-function: var(--dp-motion-ease);
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
 }
