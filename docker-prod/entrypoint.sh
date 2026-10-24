@@ -35,6 +35,11 @@ chmod 1777 /tmp
 # Stale sockets from a previous run in a persistent /tmp.
 rm -f /tmp/php-fpm.sock /tmp/supervisor.sock /tmp/supervisord.pid /tmp/nginx.pid
 chown -R www-data:www-data "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
+# Docker's stdout/stderr pipes belong to root. supervisord, nginx and PHP-FPM
+# open /dev/stdout and /dev/stderr after root is dropped, which fails with
+# EACCES unless the pipes are handed to www-data first.
+chown --dereference www-data:www-data "/proc/$$/fd/1" "/proc/$$/fd/2" 2>/dev/null \
+    || log "warning: could not hand stdout/stderr to www-data; logs may fail to open."
 
 # 3. Port ----------------------------------------------------------------
 case "$PORT" in
