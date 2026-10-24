@@ -147,4 +147,22 @@ class DashboardTest extends TestCase
 
         $this->assertSame(60, app(SyncInterval::class)->seconds());
     }
+
+    public function test_urls_use_https_behind_a_trusted_proxy(): void
+    {
+        $this->withServerVariables(['REMOTE_ADDR' => '172.18.0.1'])
+            ->get('/', ['X-Forwarded-Proto' => 'https', 'X-Forwarded-Host' => 'sba.site.com', 'X-Forwarded-Port' => '443'])
+            ->assertOk();
+
+        $this->assertSame('https://sba.site.com/build/app.js', url('/build/app.js'));
+    }
+
+    public function test_forwarded_headers_from_untrusted_clients_are_ignored(): void
+    {
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.9'])
+            ->get('/', ['X-Forwarded-Proto' => 'https', 'X-Forwarded-Host' => 'evil.example'])
+            ->assertOk();
+
+        $this->assertStringStartsWith('http://localhost', url('/build/app.js'));
+    }
 }

@@ -85,6 +85,7 @@ Go to **http://localhost:8095**, paste your `mam_id` and click **Save & update**
 | `DEBUG` | `0` | `1` logs every check (including *No change*) to `docker logs` and the Logs tab. |
 | `PORT` | `8095` | Port the web UI listens on inside gluetun's network. |
 | `UI_USERNAME` / `UI_PASSWORD` | *(empty)* | Set both to protect the UI with HTTP Basic auth. Recommended if the port is reachable from your LAN; the page can replace your `mam_id`. |
+| `TRUSTED_PROXIES` | private ranges | Reverse proxies allowed to set `X-Forwarded-*` (comma-separated IPs/CIDRs, or `*`). The default (`127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) covers a proxy on your LAN or Docker network. |
 | `MAM_AUTO_SYNC` | `true` | `false` stops automatic updates (the UI's *Update now* still works). |
 | `MAM_TIMEOUT` | `15` | Seconds to wait for MAM. |
 | `MAM_HISTORY_DAYS` | `14` | How long the Activity history is kept. |
@@ -96,6 +97,12 @@ Go to **http://localhost:8095**, paste your `mam_id` and click **Save & update**
 | --- | --- |
 | `/config` | `seedboxapi.sqlite` (encrypted `mam_id`, history), `app.key`, `logs/seedboxapi-YYYY-MM-DD.log` (14 days). Back this up. |
 | `/tmp` | Runtime sockets and temp files (optional, as in the official image). |
+
+### Behind an HTTPS reverse proxy
+
+For a name like `https://sba.site.com` served by nginx proxy manager (or Traefik, Caddy …), point the proxy host at gluetun's published port (`http://<docker-host>:8095`). The proxy sends `X-Forwarded-Proto: https`; because it connects from a private address it is trusted by default, so asset and redirect URLs come out as `https://` and the browser reports no mixed content.
+
+If the proxy connects from a public address, list it in `TRUSTED_PROXIES`. No `APP_URL` change or forced scheme is needed.
 
 ---
 

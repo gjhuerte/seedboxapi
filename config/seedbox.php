@@ -60,4 +60,18 @@ return [
     'ui_username' => env('UI_USERNAME'),
     'ui_password' => env('UI_PASSWORD'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Reverse proxy
+    |--------------------------------------------------------------------------
+    |
+    | Proxies allowed to set X-Forwarded-Proto/-Host/-For, so the app builds
+    | https:// asset URLs behind an HTTPS proxy (nginx proxy manager, Traefik,
+    | Caddy …). Comma-separated IPs/CIDRs, or "*" to trust any. The default
+    | covers loopback and private networks (Docker, LAN).
+    |
+    */
+
+    'trusted_proxies' => env('TRUSTED_PROXIES', '127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7'),
+
 ];
